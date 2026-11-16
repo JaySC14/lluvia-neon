@@ -1,0 +1,6 @@
+{
+  "name": "lluvia-neon",
+  "description": "Tema de fondo para la pestaña Code de Claude: ciudad de noche bajo la lluvia.",
+  "owner": { "name": "JaySC14" },
+  "plugins": [{ "name": "lluvia-neon", "source": "./" }]
+}

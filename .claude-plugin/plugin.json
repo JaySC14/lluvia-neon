@@ -1,0 +1,10 @@
+{
+  "name": "lluvia-neon",
+  "version": "0.1.0",
+  "description": "Tema para la pestaña Code de Claude: ciudad de noche bajo tormenta, con lluvia, rayos y neón detrás de la conversación.",
+  "author": { "name": "JaySC14", "url": "https://github.com/JaySC14" },
+  "homepage": "https://github.com/JaySC14/lluvia-neon",
+  "repository": "https://github.com/JaySC14/lluvia-neon",
+  "license": "MIT",
+  "keywords": ["theme", "backdrop", "rain", "neon"]
+}
