@@ -1,71 +1,88 @@
-import type { EngineInterface, Register } from 'claude-code'
+import type { EngineInterface, Register, ThemeSetArgs } from 'claude-code'
 
-import { escena, type Variante } from './escena'
+import { escena } from './escena'
+import { makeColors } from './make-colors.js'
 
-/** Cada variante es un fondo con su propio id, así el render sabe cuál dibujar. */
-const FONDOS: Record<Variante, string> = {
-  tormenta: 'lluvia-tormenta',
-  calma: 'lluvia-calma',
-  quieto: 'lluvia-quieto',
-}
-
-const DESCRIPCION: Record<Variante, string> = {
-  tormenta: 'tormenta con rayos y la ciudad en movimiento',
-  calma: 'llovizna, sin rayos y con el neón fijo',
-  quieto: 'la escena sin animación',
-}
-
-/** Vidrio oscuro: los paneles se esmerilan sobre la escena y el texto se sigue leyendo. */
-const VIDRIO = { blur: 14, tint: '#07060c', opacity: 0.55 }
-
-// El app pausa los frames ocultos o en vista dividida y SMIL se congela con ellos.
-// Cambiar el texto del SVG obliga a dibujar un frame nuevo, que arranca de cero.
-const CADA_10_MIN = 10 * 60 * 1000
+/** Nombre de la escena: el render lo usa para saber que el fondo es nuestro. */
+const ESCENA = 'lluvia-tormenta'
 
 /**
- * Traduce lo que se escribió después de `/lluvia` a una variante, `apagar` o `null` si no se entiende.
+ * Vidrio ahumado: los paneles se oscurecen sobre la escena y el texto se sigue leyendo.
+ * Sin desenfoque a propósito: como el fondo se mueve en cada cuadro, la app tendría que
+ * recalcularlo 60 veces por segundo sobre casi toda la ventana, y era lo que más pesaba.
  */
-export const elegir = (args: string): Variante | 'apagar' | null => {
+const VIDRIO = { blur: 0, tint: '#07060c', opacity: 0.8 }
+
+/** La app entera en la paleta de la escena: grises violeta de noche y acentos neón. */
+const { theme: COLORES, problems: PROBLEMAS } = makeColors({
+  label: 'Lluvia neón',
+  only: 'dark',
+  roles: { accent: '#ff3fa4', danger: '#ff4d5e', success: '#3dff9e', warning: '#ffb347', pro: '#b84dff' },
+  dark: {
+    gray: {
+      anchors: {
+        'surface-0': '#0b0a12',
+        'surface-1': '#110f1b',
+        'surface-2': '#161423',
+        'surface-3': '#1b1829',
+        'text-primary': '#eeebf7',
+        // Algo más claros que el gris de la escena, para que lo secundario se lea sobre el neón.
+        'text-secondary': '#d6d1e6',
+        'text-muted': '#b7b0cc',
+      },
+    },
+  },
+})
+
+const TEMA: ThemeSetArgs = {
+  backdrop: { scene: ESCENA, glass: VIDRIO },
+  overrideColorScheme: 'dark',
+  colors: COLORES,
+}
+
+// La app pausa el fondo cuando no se ve o está ocupada, y no siempre lo reanuda.
+// Cambiar el texto del SVG obliga a dibujar un frame nuevo, que arranca de cero.
+const CADA_10_MIN = 10 * 60 * 1000
+/** Desde cuántos caracteres un mensaje en borrador suele hacer que la app frene el fondo. */
+const LARGO_QUE_FRENA = 200
+/** Cuánto sin escribir cuenta como pausa: corto para que vuelva pronto, largo para no cortar entre palabras. */
+const PAUSA_AL_ESCRIBIR = 2500
+/** Cuánto esperar después de mandar un mensaje largo para redibujar, pasado el arranque de la respuesta. */
+const TRAS_ENVIAR = 2000
+
+/** Traduce lo que se escribió después de `/lluvia`: prender, apagar o `null` si no se entiende. */
+export const elegir = (args: string): 'prender' | 'apagar' | null => {
   const a = args.trim().toLowerCase()
-  if (a === '' || a === 'tormenta') return 'tormenta'
-  if (a === 'calma') return 'calma'
-  if (a === 'quieto') return 'quieto'
+  if (a === '') return 'prender'
   if (a === 'apagar' || a === 'off') return 'apagar'
   return null
 }
 
 // Estado del módulo: una recarga del mod lo reinicia, y session.start lo vuelve a armar.
 let recarga = 0
+let apagado = false
 let reloj: { cancel: () => void } | undefined
-const cache = new Map<Variante, string>()
+/** El redibujo pendiente para cuando se deja de escribir un mensaje largo. */
+let pausa: { cancel: () => void } | undefined
+const cache = new Map<boolean, string>()
 
-function svg(v: Variante) {
-  let s = cache.get(v)
-  if (!s) cache.set(v, (s = escena(v)))
+/** La escena; con `gpu`, la versión sin lluvia que va debajo del shader. */
+function svg(gpu: boolean) {
+  let s = cache.get(gpu)
+  if (!s) cache.set(gpu, (s = escena(gpu)))
   return s
 }
 
-// Desde 2.1.324 el fondo se nombra con `scene`; las versiones anteriores usan `id` y rechazan lo que no conocen.
-type ArgsTema = Parameters<EngineInterface['theme']['set']>[0]
-
-async function ponerTema($: EngineInterface, v: Variante) {
-  try {
-    return await $.theme.set({ backdrop: { scene: FONDOS[v], glass: VIDRIO, overrideColorScheme: 'dark' } } as unknown as ArgsTema)
-  } catch {
-    // Versión anterior a 2.1.324: el mismo fondo con los nombres viejos.
-    return await $.theme.set({ backdrop: { id: FONDOS[v], glass: VIDRIO, colorScheme: 'dark' } } as unknown as ArgsTema)
-  }
-}
-
-/** Pone el fondo de la variante con el vidrio oscuro; si no se dibuja, deja el motivo en el log de depuración. */
-async function poner($: EngineInterface, v: Variante) {
-  const r = await ponerTema($, v)
+/** Pone la escena y los colores; si no se dibuja, deja el motivo en el log de depuración. */
+async function poner($: EngineInterface) {
+  const r = await $.theme.set(TEMA)
   if (!r.isDrawn) $.ui.log(`lluvia-neon: el fondo no se dibuja (${r.reason})`, { to: 'debug' })
   return r
 }
 
 /** Pide un frame nuevo del fondo, que reinicia las animaciones pausadas. */
 function recargar($: EngineInterface) {
+  if (apagado) return
   recarga++
   $.ui.invalidate('ui.render')
 }
@@ -74,11 +91,16 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'lluvia',
-      description: 'Fondo de ciudad bajo la lluvia: tormenta, calma, quieto o apagar',
-      argumentHint: '[tormenta|calma|quieto|apagar]',
+      description: 'Fondo de ciudad bajo la tormenta; /lluvia apagar lo quita',
+      argumentHint: '[apagar]',
     })
-    await poner($, 'tormenta')
     reloj ??= $.clock.every(CADA_10_MIN, () => recargar($))
+    // Si se apagó, sigue apagado en las sesiones siguientes hasta que se use /lluvia.
+    apagado = (await $.store.get('apagado')) === true
+    if (apagado) return next(e)
+    const unpainted = PROBLEMAS.find(l => l.startsWith("Desktop won't paint"))
+    if (unpainted) $.ui.log(`lluvia-neon: ${unpainted}`, { to: 'debug' })
+    await poner($)
     return next(e)
   })
 
@@ -88,35 +110,58 @@ export const register: Register = on => {
     return r
   })
 
+  // Con un mensaje largo la app prioriza la caja de texto y deja el fondo quieto, shader incluido.
+  // Cuando se deja de escribir un momento, un redibujo lo vuelve a arrancar sin esperar al envío.
+  on('prompt.change', async ($, e, next) => {
+    pausa?.cancel()
+    pausa = e.text.length >= LARGO_QUE_FRENA ? $.clock.after(PAUSA_AL_ESCRIBIR, () => recargar($)) : undefined
+    return next(e)
+  })
+
+  // Redibujar reconstruye la escena entera, y al mandar un mensaje la app está ocupada arrancando
+  // la respuesta: hacerlo ahí traba el fondo un segundo. Un mensaje corto no frena el fondo, así
+  // que no hace falta; tras uno largo, se redibuja cuando ya pasó ese arranque.
+  on('prompt.submit', async ($, e, next) => {
+    pausa?.cancel()
+    pausa = e.text.length >= LARGO_QUE_FRENA ? $.clock.after(TRAS_ENVIAR, () => recargar($)) : undefined
+    return next(e)
+  }).catch(($, e, next) => next(e)) // Un fallo del fondo nunca frena un mensaje.
+
   on('command.run', { command: 'lluvia' }, async ($, e) => {
-    const v = elegir(e.args)
-    if (v === null)
-      return { text: `No conozco «${e.args.trim()}». Opciones: tormenta, calma, quieto o apagar.` }
-    if (v === 'apagar') {
+    const p = elegir(e.args)
+    if (p === null) return { text: `No conozco «${e.args.trim()}». Usá /lluvia para prenderla o /lluvia apagar.` }
+    if (p === 'apagar') {
+      apagado = true
+      await $.store.set('apagado', true)
       await $.theme.clear()
-      return { text: 'Fondo de lluvia apagado. /lluvia lo vuelve a encender.' }
+      return { text: 'Fondo de lluvia apagado, también en las próximas sesiones. /lluvia lo vuelve a encender.' }
     }
-    const r = await poner($, v)
+    apagado = false
+    await $.store.set('apagado', false)
+    const r = await poner($)
     recargar($)
     return {
       text: r.isDrawn
-        ? `Lluvia: ${DESCRIPCION[v]}.`
-        : `Lluvia: ${DESCRIPCION[v]}, pero esta vista no dibuja fondos (${r.reason}). Se ve en la pestaña Code de la app de escritorio.`,
+        ? 'Lluvia: tormenta sobre la ciudad.'
+        : `La lluvia está prendida, pero esta vista no dibuja fondos (${r.reason}). Se ve en la pestaña Code de la app de escritorio.`,
     }
   })
 
   on('ui.render', { component: 'Backdrop' }, async ($, e, next) => {
-    const p = e.props as { scene?: string; id?: string; plugin: string }
-    const nombre = p.scene ?? p.id
-    const v = (Object.keys(FONDOS) as Variante[]).find(k => FONDOS[k] === nombre)
-    // Un fondo de otro plugin, o uno que no es nuestro, sigue su camino.
-    if (!v || p.plugin !== 'lluvia-neon') return next(e)
+    // Una escena de otro plugin sigue su camino.
+    if (e.props.scene !== ESCENA || e.props.plugin !== 'lluvia-neon') return next(e)
+    if (e.surface !== 'desktop' && e.surface !== 'mobile') return next(e)
     const elementos = $.ui.resolve(e)
-    // Solo las superficies que dibujan fondos traen `Svg`.
     if (!('Svg' in elementos)) return next(e)
     const { Svg } = elementos
-    // El grupo vacío con el contador cambia la fuente para forzar un frame nuevo.
-    const fuente = svg(v).replace('</svg>', `<g id="r${recarga}"/></svg>`)
-    return <Svg source={fuente} alt="Ciudad de noche bajo la lluvia, con rayos y letreros de neón" isInteractive />
+    // En el escritorio la lluvia la dibuja la placa de video; en el celular va en el SVG.
+    const conGpu = e.surface === 'desktop' && 'Shader' in elementos
+    // El grupo con el contador cambia la fuente para forzar un frame nuevo.
+    const fuente = svg(conGpu).replace(/<\/svg>$/, `<g id="r${recarga}"/></svg>`)
+    const ciudad = <Svg source={fuente} alt="Ciudad de noche bajo la tormenta, con letreros de neón" isInteractive />
+    if (!conGpu) return ciudad
+    const { Shader } = elementos
+    // Si la app no puede correr el shader, muestra la ciudad sola: nunca queda en negro.
+    return <Shader module="./lluvia-gpu.ts">{ciudad}</Shader>
   })
 }

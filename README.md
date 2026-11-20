@@ -1,67 +1,64 @@
 # lluvia-neon
 
-Tema para la pestaña **Code** de la app de escritorio de Claude: detrás de la conversación se ve una ciudad actual de noche bajo una tormenta. Tiene rayos, lluvia en capas, letreros de neón, metro elevado, tránsito, calle mojada con reflejos y gotas sobre el vidrio. Los paneles de la app se esmerilan en oscuro para que el texto se siga leyendo.
+**English** · [Español](README.es.md)
 
-## Requisitos
+A theme for the **Code** tab of the Claude desktop app: behind the conversation, a modern city at night in a storm, with lightning, neon signs, an elevated train, traffic, a wet street full of reflections and drops on the glass. The whole app takes the scene's palette (violet night grays with pink, cyan and purple accents) and the panels darken like smoked glass so text stays readable.
 
-- La pestaña Code de la app de escritorio de Claude. La terminal no dibuja fondos.
-- Una versión de Claude Code que soporte fondos de tema (`Backdrop` en `$.theme.set`). Las versiones viejas cargan el mod pero no dibujan nada.
-- Una cuenta que permita mods.
+![Storm](docs/tormenta.png)
 
-## Instalación
+## Requirements
 
-Desde la terminal, en el prompt de una sesión de Claude Code:
+- The Code tab of the Claude desktop app. The terminal does not draw backdrops.
+- A Claude Code version that supports theme scenes and shaders (2.1.328 or newer).
+- An account that allows mods.
+
+## Install
+
+From the prompt of a Claude Code session:
 
 ```
 /plugin install lluvia-neon --marketplace JaySC14/lluvia-neon
 ```
 
-Responder `y` para agregar el marketplace y elegir el alcance (usuario).
+Answer `y` to add the marketplace and pick the scope (user).
 
-Desde una shell:
+From a shell (needs `git`):
 
 ```bash
 claude plugin install lluvia-neon --marketplace JaySC14/lluvia-neon
 ```
 
-En la app de escritorio: **+** junto al cuadro del prompt → **Plugins** → **Add marketplace** con `JaySC14/lluvia-neon` → **Add plugin**.
+In the desktop app: **+** next to the prompt box → **Plugins** → **Add marketplace** with `JaySC14/lluvia-neon` → **Add plugin**.
 
-Después de instalarlo, abrí una sesión nueva en la pestaña Code: el tema se aplica al iniciar la sesión.
+Then open a new session in the Code tab: the theme applies when the session starts.
 
-## Uso
+## Usage
 
-| Comando | Qué hace |
+| Command | What it does |
 | --- | --- |
-| `/lluvia` | Tormenta completa (por defecto): rayos, trueno y toda la ciudad en movimiento |
-| `/lluvia calma` | Llovizna, sin rayos ni patrulla, con el neón fijo: para concentrarse |
-| `/lluvia quieto` | La misma escena sin animación, para diagnosticar o ahorrar recursos |
-| `/lluvia apagar` | Quita el fondo y vuelve al aspecto normal de la app |
+| `/lluvia` | Turns the storm on (or restarts it if it got stuck) |
+| `/lluvia apagar` | Removes the backdrop and colors; stays off in later sessions until you use `/lluvia` |
 
-Si el fondo no aparece, `/lluvia` dice por qué (por ejemplo, que esa vista no dibuja fondos).
+If the backdrop does not show, `/lluvia` says why.
 
-## Cómo funciona
+## How it works
 
-- `hooks/escena.ts` arma el SVG con funciones puras y un generador con semilla fija: la misma variante da siempre el mismo dibujo. Las animaciones son SMIL, porque el fondo se dibuja en un frame sin scripts.
-- `hooks/register.tsx`:
-  - Pone el tema al iniciar la sesión con `$.theme.set` y registra `/lluvia`.
-  - Dibuja el fondo en `ui.render` sobre `Backdrop`.
-  - La app pausa los frames ocultos y eso congela las animaciones. Para recuperarlas, el fondo se vuelve a dibujar al abrir la sesión, cuando se suma otra ventana, al usar `/lluvia` y cada 10 minutos. Cada vez que se redibuja, las animaciones arrancan de cero.
-- El SVG tiene que quedar por debajo de 131 072 caracteres, que es el límite del elemento `Svg`. Hay una prueba que lo controla.
+- `hooks/escena.ts` builds the SVG from pure functions and a fixed-seed generator. The backdrop is drawn in a frame without scripts, so animation is written as SMIL and `aCss` delivers it as CSS (`@keyframes` and shared classes).
+- In the desktop app, the rain is drawn on the GPU by `hooks/lluvia-gpu.ts` (a `Shader`), over the scene without rain and with clouds and fog held still. Each frame then only redraws the small things that move (cars, signs, train). If the app can't run the shader, it shows the scene alone. On mobile the rain stays in the SVG.
+- No animation recomputes shapes (everything moves, scales or fades) and no large light changes at once: the app holds still a scene that flashes. Tests check both.
+- The app pauses the backdrop when it's hidden or busy (for example, with a long message in the prompt box). To recover, `hooks/register.tsx` redraws it when the session opens, when the window comes back, on each message, when you stop typing a long message, and every 10 minutes.
+- Colors come from `makeColors` (`hooks/make-colors.js`, copied unchanged from the Claude Code mod kit).
+- The scene fits any window without cropping: it always shows whole, resting on the bottom edge; on wide screens buildings and street continue at the sides, and in narrow windows the sky fills the space above.
 
-## Desarrollo
+## Development
 
 ```bash
 claude plugin validate .
 claude plugin test .
 ```
 
-Para probarlo sin instalar, abrí Claude Code con `claude --plugin-dir <carpeta del mod>`.
+To try it without installing, start Claude Code with `claude --plugin-dir <mod folder>`.
 
-## Notas
+## License
 
-- La escena está pensada en 680×440 y se escala para cubrir la ventana. En pantallas muy anchas o muy altas se recortan los bordes.
-- La tormenta es la variante más pesada. Si notás la app lenta, usá `/lluvia calma` o `/lluvia quieto`.
-
-## Licencia
-
-MIT, ver [LICENSE](LICENSE).
+MIT, see [LICENSE](LICENSE).
